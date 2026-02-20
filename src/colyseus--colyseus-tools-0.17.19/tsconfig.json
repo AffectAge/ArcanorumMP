@@ -1,8 +1,0 @@
-{
-    "extends": "./tsconfig/tsconfig.all.json",
-    "compilerOptions": {
-        "module": "NodeNext",
-        "target": "ESNext",
-        "customConditions": ["@source"]
-    }
-}

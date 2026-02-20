@@ -1,9 +1,0 @@
-{
-  "extends": "../../../tsconfig/tsconfig.all.json",
-  "compilerOptions": {
-    "types": ["bun-types"]
-  },
-  "include": [
-    "src/**/*"
-  ]
-}
