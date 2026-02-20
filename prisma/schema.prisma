@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Country {
+  id           String         @id
+  name         String         @unique
+  nameKey      String         @unique
+  color        String
+  passwordSalt String
+  passwordHash String
+  createdAt    DateTime       @default(now())
+  sessions     SessionToken[]
+}
+
+model SessionToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  countryId String
+  country   Country @relation(fields: [countryId], references: [id], onDelete: Cascade)
+
+  @@index([countryId])
+  @@index([expiresAt])
+}

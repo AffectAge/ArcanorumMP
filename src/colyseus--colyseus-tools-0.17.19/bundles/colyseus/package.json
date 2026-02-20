@@ -1,0 +1,75 @@
+{
+  "name": "colyseus",
+  "version": "0.17.8",
+  "description": "Multiplayer Framework for Node.js",
+  "type": "module",
+  "input": "./src/index.ts",
+  "main": "./build/index.cjs",
+  "module": "./build/index.mjs",
+  "typings": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.mjs",
+      "require": "./build/index.cjs"
+    }
+  },
+  "scripts": {
+    "test": "COLYSEUS_SEAT_RESERVATION_TIME=0.3 COLYSEUS_PRESENCE_SHORT_TIMEOUT=300 mocha test/**.test.ts test/**/**.test.ts --exit --timeout 15000"
+  },
+  "author": "Endel Dreyer",
+  "license": "MIT",
+  "keywords": [
+    "colyseus",
+    "multiplayer",
+    "netcode",
+    "realtime",
+    "networking",
+    "websockets"
+  ],
+  "files": [
+    "build",
+    "src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/colyseus/colyseus.git"
+  },
+  "homepage": "https://colyseus.io/",
+  "engines": {
+    "node": ">= 20.x"
+  },
+  "dependencies": {
+    "@colyseus/auth": "workspace:^",
+    "@colyseus/core": "workspace:^",
+    "@colyseus/playground": "workspace:^",
+    "@colyseus/monitor": "workspace:^",
+    "@colyseus/tools": "workspace:^",
+    "@colyseus/ws-transport": "workspace:^",
+    "@colyseus/redis-presence": "workspace:^",
+    "@colyseus/redis-driver": "workspace:^"
+  },
+  "devDependencies": {
+    "@colyseus/better-call": "workspace:^",
+    "@colyseus/core": "workspace:^",
+    "@colyseus/drizzle-driver": "workspace:^",
+    "@colyseus/msgpackr": "*",
+    "@colyseus/schema": "^4.0.7",
+    "@colyseus/sdk": "workspace:^",
+    "@colyseus/tools": "workspace:^",
+    "@colyseus/uwebsockets-transport": "workspace:^",
+    "@types/ws": "^8.5.14",
+    "ws": "^8.18.0",
+    "zod": "^4.1.12"
+  },
+  "peerDependencies": {
+    "@colyseus/auth": "0.17.x",
+    "@colyseus/core": "0.17.x",
+    "@colyseus/redis-driver": "0.17.x",
+    "@colyseus/redis-presence": "0.17.x",
+    "@colyseus/schema": "^4.0.7",
+    "@colyseus/uwebsockets-transport": "0.17.x",
+    "@colyseus/ws-transport": "0.17.x"
+  },
+  "gitHead": "25ba61e283429bb4fa02db0454f804ea218259eb"
+}
