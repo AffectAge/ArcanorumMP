@@ -1,0 +1,59 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "p_west",
+      "properties": { "id": "p_west", "name": "Западная область" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-20, 30], [-5, 30], [-5, 45], [-20, 45], [-20, 30]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "p_center",
+      "properties": { "id": "p_center", "name": "Центральный регион" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-5, 30], [10, 30], [10, 45], [-5, 45], [-5, 30]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "p_east",
+      "properties": { "id": "p_east", "name": "Восточная область" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[10, 30], [25, 30], [25, 45], [10, 45], [10, 30]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "p_north",
+      "properties": { "id": "p_north", "name": "Северный край" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-5, 45], [10, 45], [10, 60], [-5, 60], [-5, 45]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "p_south",
+      "properties": { "id": "p_south", "name": "Южный округ" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-5, 15], [10, 15], [10, 30], [-5, 30], [-5, 15]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "p_coast",
+      "properties": { "id": "p_coast", "name": "Прибрежная зона" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[25, 20], [40, 20], [40, 35], [25, 35], [25, 20]]]
+      }
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Country {
+  id           String    @id @default(cuid())
+  name         String    @unique
+  passwordHash String
+  color        String
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  orders       Order[]
+  provinces    Province[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  countryId  String
+  tokenHash  String   @unique
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  country    Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+}
+
+model Turn {
+  id             String    @id @default(cuid())
+  turnNumber     Int       @unique
+  phase          String
+  phaseEndsAt    DateTime?
+  createdAt      DateTime  @default(now())
+  committedAt    DateTime?
+  seed           String
+  orders         Order[]
+  battles        Battle[]
+}
+
+model Order {
+  id               String   @id @default(cuid())
+  turnId           String
+  countryId        String
+  type             String
+  provinceId       String
+  targetProvinceId String?
+  status           String   @default("PLANNED")
+  createdAt        DateTime @default(now())
+  turn             Turn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  country          Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+
+  @@index([turnId, countryId])
+}
+
+model Province {
+  id             String    @id
+  name           String
+  ownerCountryId String?
+  contested      Boolean   @default(false)
+  country        Country?  @relation(fields: [ownerCountryId], references: [id], onDelete: SetNull)
+}
+
+model Battle {
+  id             String   @id @default(cuid())
+  turnId         String
+  provinceId     String
+  attackerId     String
+  defenderId     String?
+  winnerCountryId String?
+  summary        String
+  createdAt      DateTime @default(now())
+  turn           Turn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
+
+  @@index([turnId])
+}
