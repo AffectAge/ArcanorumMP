@@ -29,6 +29,12 @@ export const submitOrderSchema = z.object({
   targetProvinceId: z.string().optional()
 });
 
+export const allocateColonizationSchema = z.object({
+  provinceId: z.string().min(1),
+  provinceName: z.string().min(1).optional(),
+  points: z.number().int().positive()
+});
+
 export type SubmitOrderInput = z.infer<typeof submitOrderSchema>;
 
 export type TurnSnapshot = {
@@ -43,9 +49,13 @@ export type ProvinceView = {
   name: string;
   ownerCountryId: string | null;
   isContested: boolean;
+  colonizationCost: number;
 };
 
 export type PublicGameState = {
   snapshot: TurnSnapshot;
   provinces: ProvinceView[];
+  uiStateByCountry: Record<string, { showRegionLabels: boolean }>;
+  countryResourcesById: Record<string, { colonizationPoints: number }>;
+  colonizationProgress: Array<{ countryId: string; provinceId: string; progress: number }>;
 };

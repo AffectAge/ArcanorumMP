@@ -14,10 +14,13 @@ model Country {
   color        String
   flagImage    String?
   coatOfArmsImage String?
+  uiShowRegionLabels Boolean @default(true)
+  colonizationPoints Int @default(0)
   createdAt    DateTime  @default(now())
   sessions     Session[]
   orders       Order[]
   provinces    Province[]
+  colonizations ColonizationProgress[]
 }
 
 model Session {
@@ -61,7 +64,23 @@ model Province {
   name           String
   ownerCountryId String?
   contested      Boolean   @default(false)
+  colonizationCost Int @default(100)
   country        Country?  @relation(fields: [ownerCountryId], references: [id], onDelete: SetNull)
+  colonizations  ColonizationProgress[]
+}
+
+model ColonizationProgress {
+  id        String   @id @default(cuid())
+  countryId String
+  provinceId String
+  progress  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  province  Province @relation(fields: [provinceId], references: [id], onDelete: Cascade)
+
+  @@unique([countryId, provinceId])
+  @@index([provinceId])
 }
 
 model Battle {

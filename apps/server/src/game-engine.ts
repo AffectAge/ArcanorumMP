@@ -1,7 +1,12 @@
 import crypto from "node:crypto";
 import { createActor, createMachine } from "xstate";
 import type { Server } from "socket.io";
-import { submitOrderSchema, type PublicGameState, type SubmitOrderInput } from "@wego/shared";
+import {
+  allocateColonizationSchema,
+  submitOrderSchema,
+  type PublicGameState,
+  type SubmitOrderInput
+} from "@wego/shared";
 import { prisma } from "./prisma.js";
 import { config } from "./config.js";
 import { hashToScore } from "./deterministic.js";
@@ -121,6 +126,53 @@ export class WeGoEngine {
     await this.emitState();
   }
 
+  async allocateColonization(countryId: string, payload: { provinceId: string; provinceName?: string; points: number }) {
+    if (this.currentPhase !== "planning") {
+      throw new Error("Колонизация доступна только в фазе planning.");
+    }
+
+    const input = allocateColonizationSchema.parse(payload);
+    await this.ensureProvince(input.provinceId, input.provinceName);
+
+    const country = await prisma.country.findUnique({
+      where: { id: countryId },
+      select: { colonizationPoints: true }
+    });
+    if (!country) {
+      throw new Error("Страна не найдена.");
+    }
+    if (country.colonizationPoints < input.points) {
+      throw new Error("Недостаточно очков колонизации.");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.country.update({
+        where: { id: countryId },
+        data: { colonizationPoints: { decrement: input.points } }
+      });
+
+      const progress = await tx.colonizationProgress.upsert({
+        where: { countryId_provinceId: { countryId, provinceId: input.provinceId } },
+        create: { countryId, provinceId: input.provinceId, progress: input.points },
+        update: { progress: { increment: input.points } }
+      });
+
+      const province = await tx.province.findUniqueOrThrow({
+        where: { id: input.provinceId },
+        select: { ownerCountryId: true, colonizationCost: true }
+      });
+
+      if ((!province.ownerCountryId || province.ownerCountryId === countryId) && progress.progress >= province.colonizationCost) {
+        await tx.province.update({
+          where: { id: input.provinceId },
+          data: { ownerCountryId: countryId, contested: false }
+        });
+      }
+    });
+
+    await this.emitState();
+  }
+
   async markReady(countryId: string) {
     if (this.currentPhase !== "planning") {
       return;
@@ -137,6 +189,18 @@ export class WeGoEngine {
 
   async getPublicState(): Promise<PublicGameState> {
     const provinces = await prisma.province.findMany({ orderBy: { name: "asc" } });
+    const countries = await prisma.country.findMany({
+      select: { id: true, uiShowRegionLabels: true, colonizationPoints: true }
+    });
+    const colonizationProgress = await prisma.colonizationProgress.findMany({
+      select: { countryId: true, provinceId: true, progress: true }
+    });
+    const uiStateByCountry = Object.fromEntries(
+      countries.map((country) => [country.id, { showRegionLabels: country.uiShowRegionLabels }])
+    );
+    const countryResourcesById = Object.fromEntries(
+      countries.map((country) => [country.id, { colonizationPoints: country.colonizationPoints }])
+    );
 
     return {
       snapshot: {
@@ -145,12 +209,18 @@ export class WeGoEngine {
         phaseEndsAt: this.phaseEndsAt ? this.phaseEndsAt.getTime() : null,
         readyCountries: [...this.readyCountries]
       },
-      provinces: provinces.map((province: { id: string; name: string; ownerCountryId: string | null; contested: boolean }) => ({
+      provinces: provinces.map(
+        (province: { id: string; name: string; ownerCountryId: string | null; contested: boolean; colonizationCost: number }) => ({
         id: province.id,
         name: province.name,
         ownerCountryId: province.ownerCountryId,
-        isContested: province.contested
-      }))
+        isContested: province.contested,
+        colonizationCost: province.colonizationCost
+      })
+      ),
+      uiStateByCountry,
+      countryResourcesById,
+      colonizationProgress
     };
   }
 
@@ -208,6 +278,9 @@ export class WeGoEngine {
   private async handleEnterPlanning() {
     this.currentPhase = "planning";
     this.readyCountries.clear();
+    await prisma.country.updateMany({
+      data: { colonizationPoints: { increment: 100 } }
+    });
 
     if (this.needsNewTurn) {
       const nextTurn = await prisma.turn.create({

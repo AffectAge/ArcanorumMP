@@ -3,7 +3,8 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
-import { loginSchema, registerSchema, submitOrderSchema } from "@wego/shared";
+import { allocateColonizationSchema, loginSchema, registerSchema, submitOrderSchema } from "@wego/shared";
+import { z } from "zod";
 import { config } from "./config.js";
 import {
   authCookieName,
@@ -38,6 +39,9 @@ const io = new Server(server, {
 });
 
 const engine = new WeGoEngine(io);
+const uiStateSchema = z.object({
+  showRegionLabels: z.boolean().optional()
+});
 
 async function authCountryId(req: express.Request): Promise<string | null> {
   const token = req.cookies?.[authCookieName] as string | undefined;
@@ -46,7 +50,7 @@ async function authCountryId(req: express.Request): Promise<string | null> {
 
 app.get("/api/countries", async (_req, res) => {
   const countries = await prisma.country.findMany({
-    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true },
+    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true, uiShowRegionLabels: true },
     orderBy: { name: "asc" }
   });
 
@@ -74,7 +78,7 @@ app.get("/api/auth/me", async (req, res) => {
 
   const country = await prisma.country.findUnique({
     where: { id: countryId },
-    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true }
+    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true, uiShowRegionLabels: true }
   });
 
   if (!country) {
@@ -112,7 +116,7 @@ app.post("/api/auth/register", async (req, res) => {
       coatOfArmsImage: parsed.data.coatOfArmsImage,
       passwordHash: hashPassword(parsed.data.password)
     },
-    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true }
+    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true, uiShowRegionLabels: true }
   });
 
   await issueSession(country.id, res);
@@ -145,7 +149,8 @@ app.post("/api/auth/login", async (req, res) => {
       name: country.name,
       color: country.color,
       flagImage: country.flagImage,
-      coatOfArmsImage: country.coatOfArmsImage
+      coatOfArmsImage: country.coatOfArmsImage,
+      uiShowRegionLabels: country.uiShowRegionLabels
     }
   });
 });
@@ -197,6 +202,55 @@ app.post("/api/game/ready", async (req, res) => {
 
   await engine.markReady(countryId);
   res.status(201).json({ ok: true });
+});
+
+app.post("/api/game/colonization", async (req, res) => {
+  const countryId = await authCountryId(req);
+  if (!countryId) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+
+  const parsed = allocateColonizationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await engine.allocateColonization(countryId, parsed.data);
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    res.status(409).json({ error: error instanceof Error ? error.message : "colonization_failed" });
+  }
+});
+
+app.post("/api/game/ui-state", async (req, res) => {
+  const countryId = await authCountryId(req);
+  if (!countryId) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+
+  const parsed = uiStateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+    return;
+  }
+
+  const data: { uiShowRegionLabels?: boolean } = {};
+  if (typeof parsed.data.showRegionLabels === "boolean") {
+    data.uiShowRegionLabels = parsed.data.showRegionLabels;
+  }
+
+  await prisma.country.update({
+    where: { id: countryId },
+    data
+  });
+
+  const state = await engine.getPublicState();
+  io.emit("game:state", state);
+  res.status(200).json({ ok: true });
 });
 
 io.use(async (socket, next) => {

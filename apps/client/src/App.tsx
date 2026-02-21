@@ -6,33 +6,20 @@ import { createMachine } from "xstate";
 import { useMachine } from "@xstate/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import type { PublicGameState, SubmitOrderInput } from "@wego/shared";
+import type { PublicGameState } from "@wego/shared";
 
 const API_URL = "http://localhost:4000";
 const ADM1_GEOJSON_URL = `${API_URL}/api/map/adm1`;
-const STORAGE_KEYS = {
-  showRegionLabels: "wego:ui:showRegionLabels"
-} as const;
 const POLITICAL_BASEMAP_STYLE = {
   version: 8,
-  sources: {
-    cartoLight: {
-      type: "raster",
-      tiles: [
-        "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
-        "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
-        "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png"
-      ],
-      tileSize: 256,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-    }
-  },
+  sources: {},
   layers: [
     {
-      id: "carto-light",
-      type: "raster",
-      source: "cartoLight"
+      id: "background",
+      type: "background",
+      paint: {
+        "background-color": "#1f2937"
+      }
     }
   ]
 } as const;
@@ -43,6 +30,7 @@ type Country = {
   color: string;
   flagImage?: string | null;
   coatOfArmsImage?: string | null;
+  uiShowRegionLabels?: boolean;
 };
 
 type CountryPayload = { country: Country };
@@ -127,6 +115,33 @@ function formatRemaining(ms: number | null): string {
   return `${mm}:${ss}`;
 }
 
+function getProvinceId(properties: Record<string, unknown> | undefined, index: number): string {
+  const direct =
+    (properties?.id as string | undefined) ??
+    (properties?.shapeID as string | undefined) ??
+    (properties?.adm1_code as string | undefined) ??
+    (properties?.iso_3166_2 as string | undefined);
+  if (direct && direct.trim().length > 0) return direct;
+
+  const neId = properties?.ne_id;
+  if (typeof neId === "number" || typeof neId === "string") {
+    return `ne_${String(neId)}`;
+  }
+
+  const admin = (properties?.admin as string | undefined) ?? "unknown";
+  const name = (properties?.name as string | undefined) ?? `province_${index}`;
+  return `${admin}:${name}:${index}`;
+}
+
+function getProvinceName(properties: Record<string, unknown> | undefined, fallbackId: string): string {
+  return (
+    (properties?.name as string | undefined) ??
+    (properties?.shapeName as string | undefined) ??
+    (properties?.name_en as string | undefined) ??
+    fallbackId
+  );
+}
+
 function getPhaseIcon(phase: PublicGameState["snapshot"]["phase"] | undefined) {
   if (phase === "planning") {
     return { icon: <Clock3 size={15} />, color: "text-amber-400", title: "Планирование" };
@@ -163,18 +178,14 @@ export default function App() {
   const [selectedProvinceId, setSelectedProvinceId] = useState<string | null>(null);
   const [selectedProvinceName, setSelectedProvinceName] = useState<string | null>(null);
   const [regionsLoadError, setRegionsLoadError] = useState<string | null>(null);
-  const [showRegionLabels, setShowRegionLabels] = useState<boolean>(() => {
-    try {
-      const stored = window.localStorage.getItem(STORAGE_KEYS.showRegionLabels);
-      if (stored === null) return true;
-      return stored === "1";
-    } catch {
-      return true;
-    }
-  });
+  const [showRegionLabels, setShowRegionLabels] = useState(true);
   const [toggleAnim, setToggleAnim] = useState(false);
   const [hoveredRegion, setHoveredRegion] = useState<HoverRegion | null>(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; provinceId: string; provinceName: string } | null>(null);
+  const [colonizationModalOpen, setColonizationModalOpen] = useState(false);
+  const [colonizationPointsInput, setColonizationPointsInput] = useState(10);
+  const [colonizationTarget, setColonizationTarget] = useState<{ provinceId: string; provinceName: string } | null>(null);
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -295,16 +306,26 @@ export default function App() {
     }
   });
 
-  const submitOrderMutation = useMutation({
-    mutationFn: (payload: SubmitOrderInput) => api("/api/game/orders", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }),
+  const colonizationMutation = useMutation({
+    mutationFn: (payload: { provinceId: string; provinceName?: string; points: number }) =>
+      api("/api/game/colonization", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["game-state"] })
   });
 
   const readyMutation = useMutation({
     mutationFn: () => api("/api/game/ready", { method: "POST" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["game-state"] })
+  });
+
+  const uiStateMutation = useMutation({
+    mutationFn: (payload: { showRegionLabels: boolean }) =>
+      api("/api/game/ui-state", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["game-state"] })
   });
 
@@ -317,6 +338,8 @@ export default function App() {
       center: [10, 25],
       zoom: 1.5
     });
+    map.dragRotate.disable();
+    map.touchZoomRotate.disableRotation();
 
     map.on("load", async () => {
       try {
@@ -325,11 +348,26 @@ export default function App() {
           throw new Error(`Не удалось загрузить ADM1 карту: ${response.status}`);
         }
         const geojson = await response.json();
-        regionsGeoJsonRef.current = geojson;
+        const normalizedGeojson = {
+          ...geojson,
+          features: (geojson.features ?? []).map((feature: any, index: number) => {
+            const provinceId = getProvinceId(feature?.properties, index);
+            const provinceName = getProvinceName(feature?.properties, provinceId);
+            return {
+              ...feature,
+              properties: {
+                ...(feature?.properties ?? {}),
+                id: provinceId,
+                name: provinceName
+              }
+            };
+          })
+        };
+        regionsGeoJsonRef.current = normalizedGeojson;
 
         map.addSource("provinces", {
           type: "geojson",
-          data: geojson
+          data: normalizedGeojson
         });
       } catch (error) {
         setRegionsLoadError(error instanceof Error ? error.message : "Ошибка загрузки карты регионов");
@@ -341,7 +379,7 @@ export default function App() {
         type: "fill",
         source: "provinces",
         paint: {
-          "fill-color": ["coalesce", ["get", "ownerColor"], "#3f3f46"],
+          "fill-color": ["coalesce", ["get", "ownerColor"], "#ffffff"],
           "fill-opacity": ["case", ["boolean", ["get", "contested"], false], 0.7, 0.12]
         }
       });
@@ -361,10 +399,32 @@ export default function App() {
         type: "line",
         source: "provinces",
         paint: {
-          "line-color": "#22c55e",
-          "line-width": 3
+          "line-color": "#000000",
+          "line-width": 3.2
         },
         filter: ["==", ["get", "id"], ""]
+      });
+
+      map.addLayer({
+        id: "provinces-hover-fill",
+        type: "fill",
+        source: "provinces",
+        paint: {
+          "fill-color": "#000000",
+          "fill-opacity": 0.14
+        },
+        filter: ["==", ["get", "id"], ""]
+      });
+
+      // Dedicated transparent hit layer for robust pointer events.
+      map.addLayer({
+        id: "provinces-hover-hit",
+        type: "fill",
+        source: "provinces",
+        paint: {
+          "fill-color": "#000000",
+          "fill-opacity": 0.001
+        }
       });
 
       map.addLayer({
@@ -382,14 +442,13 @@ export default function App() {
         }
       });
 
-      map.on("mousemove", "provinces-fill", (event) => {
+      map.on("mousemove", "provinces-hover-hit", (event) => {
         map.getCanvas().style.cursor = "pointer";
         const feature = event.features?.[0];
-        const id =
-          (feature?.properties?.shapeID as string | undefined) ??
-          (feature?.properties?.id as string | undefined);
+        const id = feature?.properties?.id as string | undefined;
         if (!id) return;
         map.setFilter("provinces-hover", ["==", ["get", "id"], id]);
+        map.setFilter("provinces-hover-fill", ["==", ["get", "id"], id]);
         setHoverPos({ x: event.point.x, y: event.point.y });
         setHoveredRegion({
           id,
@@ -399,21 +458,64 @@ export default function App() {
         });
       });
 
-      map.on("mouseleave", "provinces-fill", () => {
+      map.on("mouseleave", "provinces-hover-hit", () => {
         map.getCanvas().style.cursor = "";
         map.setFilter("provinces-hover", ["==", ["get", "id"], ""]);
+        map.setFilter("provinces-hover-fill", ["==", ["get", "id"], ""]);
         setHoveredRegion(null);
       });
 
-      map.on("click", "provinces-fill", (event) => {
+      // Reliable RMB handling: use native canvas mousedown and query rendered region manually.
+      const canvas = map.getCanvas();
+      const handleNativeContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+      };
+      const handleNativeMouseDown = (e: MouseEvent) => {
+        if (e.button !== 2) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const rect = canvas.getBoundingClientRect();
+        const point = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top
+        };
+        const features = map.queryRenderedFeatures([point.x, point.y], { layers: ["provinces-hover-hit"] });
+        const feature = features[0];
+        const provinceId = feature?.properties?.id as string | undefined;
+        const provinceName = (feature?.properties?.name as string | undefined) ?? provinceId;
+        if (!provinceId) return;
+
+        setContextMenu({
+          x: point.x,
+          y: point.y,
+          provinceId,
+          provinceName: provinceName ?? provinceId
+        });
+      };
+      const handleMapContextMenu = (event: maplibregl.MapMouseEvent) => {
+        event.preventDefault();
+        const features = map.queryRenderedFeatures(event.point, { layers: ["provinces-hover-hit"] });
+        const feature = features[0];
+        const provinceId = feature?.properties?.id as string | undefined;
+        const provinceName = (feature?.properties?.name as string | undefined) ?? provinceId;
+        if (!provinceId) return;
+        setContextMenu({
+          x: event.point.x,
+          y: event.point.y,
+          provinceId,
+          provinceName: provinceName ?? provinceId
+        });
+      };
+      canvas.addEventListener("contextmenu", handleNativeContextMenu);
+      canvas.addEventListener("mousedown", handleNativeMouseDown);
+      map.on("contextmenu", handleMapContextMenu);
+
+      map.on("click", "provinces-hover-hit", (event) => {
+        setContextMenu(null);
         const feature = event.features?.[0];
-        const provinceId =
-          (feature?.properties?.shapeID as string | undefined) ??
-          (feature?.properties?.id as string | undefined);
-        const provinceName =
-          (feature?.properties?.shapeName as string | undefined) ??
-          (feature?.properties?.name as string | undefined) ??
-          provinceId;
+        const provinceId = feature?.properties?.id as string | undefined;
+        const provinceName = (feature?.properties?.name as string | undefined) ?? provinceId;
         if (provinceId) {
           setSelectedProvinceId(provinceId);
           setSelectedProvinceName(provinceName ?? provinceId);
@@ -441,7 +543,7 @@ export default function App() {
     const styledGeojson = {
       type: "FeatureCollection",
       features: regionsGeoJsonRef.current.features.map((feature: any) => {
-        const featureId = feature.properties.shapeID ?? feature.properties.id;
+        const featureId = feature.properties.id;
         const province = gameState.provinces.find((item) => item.id === featureId);
         const ownerColor = province?.ownerCountryId ? countryColors.get(province.ownerCountryId) : null;
 
@@ -450,7 +552,7 @@ export default function App() {
           properties: {
             ...feature.properties,
             id: featureId,
-            name: feature.properties.shapeName ?? feature.properties.name ?? featureId,
+            name: feature.properties.name ?? featureId,
             ownerCountryId: province?.ownerCountryId ?? null,
             ownerName: province?.ownerCountryId ? countriesQuery.data.countries.find((c) => c.id === province.ownerCountryId)?.name ?? null : null,
             ownerColor,
@@ -480,16 +582,26 @@ export default function App() {
   }, [showRegionLabels]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.showRegionLabels, showRegionLabels ? "1" : "0");
-    } catch {
-      // Ignore storage errors (private mode / restricted storage).
+    if (!selfCountry || !gameState) return;
+    const value = gameState.uiStateByCountry?.[selfCountry.id]?.showRegionLabels;
+    if (typeof value === "boolean") {
+      setShowRegionLabels(value);
     }
-  }, [showRegionLabels]);
+  }, [gameState, selfCountry]);
 
   const readySet = useMemo(() => new Set(gameState?.snapshot.readyCountries ?? []), [gameState]);
   const isSelfReady = selfCountry ? readySet.has(selfCountry.id) : false;
   const phaseUI = getPhaseIcon(gameState?.snapshot.phase);
+  const selfColonizationPoints = selfCountry ? gameState?.countryResourcesById?.[selfCountry.id]?.colonizationPoints ?? 0 : 0;
+  const selectedProvinceCost = selectedProvinceId
+    ? gameState?.provinces.find((province) => province.id === selectedProvinceId)?.colonizationCost ?? 100
+    : 100;
+  const selfSelectedProvinceProgress =
+    selfCountry && selectedProvinceId
+      ? gameState?.colonizationProgress.find(
+          (entry) => entry.countryId === selfCountry.id && entry.provinceId === selectedProvinceId
+        )?.progress ?? 0
+      : 0;
 
   const authOpen = authState.matches("unauthenticated") || authState.matches("authenticating") || authState.matches("checking");
 
@@ -522,6 +634,7 @@ export default function App() {
               <span className="font-semibold" style={{ color: selfCountry.color }}>
                 {selfCountry.name}
               </span>
+              <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-green-400">{selfColonizationPoints} CP</span>
               {selfCountry?.coatOfArmsImage && (
                 <img className="h-6 w-6 rounded border border-zinc-700 object-cover" src={selfCountry.coatOfArmsImage} alt="Герб страны" />
               )}
@@ -751,7 +864,9 @@ export default function App() {
           toggleAnim ? "icon-toggle-animate" : ""
         }`}
         onClick={() => {
-          setShowRegionLabels((value) => !value);
+          const nextValue = !showRegionLabels;
+          setShowRegionLabels(nextValue);
+          uiStateMutation.mutate({ showRegionLabels: nextValue });
           setToggleAnim(false);
           requestAnimationFrame(() => setToggleAnim(true));
         }}
@@ -778,6 +893,96 @@ export default function App() {
           {hoveredRegion.contested && <p className="mt-1 font-semibold text-green-400">Оспаривается</p>}
         </div>
       )}
+
+      {contextMenu && (
+        <div
+          className="absolute z-40 w-44 rounded-lg border border-zinc-700 bg-zinc-900/95 p-2 shadow-2xl"
+          style={{
+            left: Math.min(contextMenu.x + 12, window.innerWidth - 200),
+            top: Math.min(contextMenu.y + 12, window.innerHeight - 120)
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <p className="mb-2 text-xs text-zinc-400">{contextMenu.provinceName}</p>
+          <button
+            className="w-full rounded-md border border-zinc-700 px-3 py-2 text-left text-sm transition hover:border-green-500 hover:text-green-400"
+            onClick={() => {
+              setColonizationTarget({
+                provinceId: contextMenu.provinceId,
+                provinceName: contextMenu.provinceName
+              });
+              setSelectedProvinceId(contextMenu.provinceId);
+              setSelectedProvinceName(contextMenu.provinceName);
+              setColonizationPointsInput(Math.max(1, Math.min(100, selfColonizationPoints || 1)));
+              setColonizationModalOpen(true);
+              setContextMenu(null);
+            }}
+          >
+            Колонизация
+          </button>
+        </div>
+      )}
+
+      <Dialog.Root open={colonizationModalOpen} onOpenChange={setColonizationModalOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/55 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 p-5">
+            <Dialog.Title className="text-lg font-semibold">Колонизация провинции</Dialog.Title>
+            <Dialog.Description className="mt-1 text-sm text-zinc-400">
+              {colonizationTarget?.provinceName ?? selectedProvinceName ?? "Провинция не выбрана"}
+            </Dialog.Description>
+            <div className="mt-4 space-y-3 text-sm">
+              <p>
+                Доступно очков: <span className="font-semibold text-green-400">{selfColonizationPoints}</span>
+              </p>
+              <p>
+                Ваш прогресс:{" "}
+                <span className="font-semibold">
+                  {selfSelectedProvinceProgress}/{selectedProvinceCost}
+                </span>
+              </p>
+              <input
+                className="w-full"
+                type="range"
+                min={1}
+                max={Math.max(1, selfColonizationPoints)}
+                value={Math.min(colonizationPointsInput, Math.max(1, selfColonizationPoints))}
+                onChange={(event) => setColonizationPointsInput(Number(event.target.value))}
+                disabled={selfColonizationPoints <= 0}
+              />
+              <input
+                className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm outline-none focus:border-green-500"
+                type="number"
+                min={1}
+                max={selfColonizationPoints}
+                value={colonizationPointsInput}
+                onChange={(event) => setColonizationPointsInput(Number(event.target.value))}
+                disabled={selfColonizationPoints <= 0}
+              />
+              <button
+                className="w-full rounded-md border border-zinc-700 px-3 py-2 text-sm transition hover:border-green-500 hover:text-green-400 disabled:opacity-60"
+                disabled={!colonizationTarget || selfColonizationPoints <= 0 || colonizationPointsInput <= 0}
+                onClick={() => {
+                  if (!colonizationTarget) return;
+                  const points = Math.min(Math.max(1, Math.floor(colonizationPointsInput)), selfColonizationPoints);
+                  colonizationMutation.mutate(
+                    {
+                      provinceId: colonizationTarget.provinceId,
+                      provinceName: colonizationTarget.provinceName,
+                      points
+                    },
+                    {
+                      onSuccess: () => setColonizationModalOpen(false)
+                    }
+                  );
+                }}
+              >
+                Начать колонизацию
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }
