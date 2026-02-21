@@ -14,6 +14,7 @@ import {
   verifyPassword
 } from "./auth.js";
 import { WeGoEngine } from "./game-engine.js";
+import { getWorldAdm1GeoJson } from "./map-data.js";
 import { prisma } from "./prisma.js";
 
 const app = express();
@@ -45,11 +46,23 @@ async function authCountryId(req: express.Request): Promise<string | null> {
 
 app.get("/api/countries", async (_req, res) => {
   const countries = await prisma.country.findMany({
-    select: { id: true, name: true, color: true },
+    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true },
     orderBy: { name: "asc" }
   });
 
   res.json({ countries });
+});
+
+app.get("/api/map/adm1", async (_req, res) => {
+  try {
+    const geojson = await getWorldAdm1GeoJson();
+    res.json(geojson);
+  } catch (error) {
+    res.status(500).json({
+      error: "map_load_failed",
+      message: error instanceof Error ? error.message : "Не удалось загрузить карту ADM1"
+    });
+  }
 });
 
 app.get("/api/auth/me", async (req, res) => {
@@ -61,7 +74,7 @@ app.get("/api/auth/me", async (req, res) => {
 
   const country = await prisma.country.findUnique({
     where: { id: countryId },
-    select: { id: true, name: true, color: true }
+    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true }
   });
 
   if (!country) {
@@ -95,9 +108,11 @@ app.post("/api/auth/register", async (req, res) => {
     data: {
       name: parsed.data.countryName,
       color: parsed.data.color,
+      flagImage: parsed.data.flagImage,
+      coatOfArmsImage: parsed.data.coatOfArmsImage,
       passwordHash: hashPassword(parsed.data.password)
     },
-    select: { id: true, name: true, color: true }
+    select: { id: true, name: true, color: true, flagImage: true, coatOfArmsImage: true }
   });
 
   await issueSession(country.id, res);
@@ -124,7 +139,15 @@ app.post("/api/auth/login", async (req, res) => {
   }
 
   await issueSession(country.id, res);
-  res.json({ country: { id: country.id, name: country.name, color: country.color } });
+  res.json({
+    country: {
+      id: country.id,
+      name: country.name,
+      color: country.color,
+      flagImage: country.flagImage,
+      coatOfArmsImage: country.coatOfArmsImage
+    }
+  });
 });
 
 app.post("/api/auth/logout", async (req, res) => {

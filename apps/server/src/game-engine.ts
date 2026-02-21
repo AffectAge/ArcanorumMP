@@ -14,15 +14,6 @@ type MachineContext = {
   commitDurationMs: number;
 };
 
-const defaultProvinceSeeds = [
-  { id: "p_north", name: "Северный край" },
-  { id: "p_south", name: "Южный округ" },
-  { id: "p_west", name: "Западная область" },
-  { id: "p_east", name: "Восточная область" },
-  { id: "p_center", name: "Центральный регион" },
-  { id: "p_coast", name: "Прибрежная зона" }
-];
-
 export class WeGoEngine {
   private readonly io: Server;
   private readonly actor;
@@ -105,6 +96,7 @@ export class WeGoEngine {
     }
 
     const input = submitOrderSchema.parse(payload);
+    await this.ensureProvince(input.provinceId, input.provinceName);
 
     await prisma.order.deleteMany({
       where: {
@@ -168,11 +160,17 @@ export class WeGoEngine {
   }
 
   private async ensureProvinces() {
-    const count = await prisma.province.count();
-    if (count > 0) return;
+    // Провинции создаются лениво из выбранных на карте ADM-единиц.
+  }
 
-    await prisma.province.createMany({
-      data: defaultProvinceSeeds
+  private async ensureProvince(id: string, name?: string) {
+    await prisma.province.upsert({
+      where: { id },
+      update: name ? { name } : {},
+      create: {
+        id,
+        name: name ?? id
+      }
     });
   }
 

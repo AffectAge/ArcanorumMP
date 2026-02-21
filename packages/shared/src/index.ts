@@ -17,12 +17,15 @@ export const loginSchema = z.object({
 export const registerSchema = z.object({
   countryName: z.string().min(2).max(64),
   password: z.string().min(4).max(128),
-  color: z.string().regex(/^#([A-Fa-f0-9]{6})$/)
+  color: z.string().regex(/^#([A-Fa-f0-9]{6})$/),
+  flagImage: z.string().max(2_000_000).optional(),
+  coatOfArmsImage: z.string().max(2_000_000).optional()
 });
 
 export const submitOrderSchema = z.object({
   type: orderTypeSchema,
   provinceId: z.string().min(1),
+  provinceName: z.string().min(1).optional(),
   targetProvinceId: z.string().optional()
 });
 

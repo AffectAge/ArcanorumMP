@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flag, LogOut, Plus } from "lucide-react";
+import { Check, Clock3, Eye, EyeOff, Flag, Hash, LogOut, Plus, RotateCw } from "lucide-react";
 import maplibregl from "maplibre-gl";
 import { createMachine } from "xstate";
 import { useMachine } from "@xstate/react";
@@ -9,15 +9,50 @@ import { io, type Socket } from "socket.io-client";
 import type { PublicGameState, SubmitOrderInput } from "@wego/shared";
 
 const API_URL = "http://localhost:4000";
+const ADM1_GEOJSON_URL = `${API_URL}/api/map/adm1`;
+const STORAGE_KEYS = {
+  showRegionLabels: "wego:ui:showRegionLabels"
+} as const;
+const POLITICAL_BASEMAP_STYLE = {
+  version: 8,
+  sources: {
+    cartoLight: {
+      type: "raster",
+      tiles: [
+        "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+        "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png"
+      ],
+      tileSize: 256,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+    }
+  },
+  layers: [
+    {
+      id: "carto-light",
+      type: "raster",
+      source: "cartoLight"
+    }
+  ]
+} as const;
 
 type Country = {
   id: string;
   name: string;
   color: string;
+  flagImage?: string | null;
+  coatOfArmsImage?: string | null;
 };
 
 type CountryPayload = { country: Country };
 type MePayload = { country: Country | null };
+type HoverRegion = {
+  id: string;
+  name: string;
+  ownerName: string | null;
+  contested: boolean;
+};
 
 const authMachine = createMachine({
   id: "auth",
@@ -92,6 +127,25 @@ function formatRemaining(ms: number | null): string {
   return `${mm}:${ss}`;
 }
 
+function getPhaseIcon(phase: PublicGameState["snapshot"]["phase"] | undefined) {
+  if (phase === "planning") {
+    return { icon: <Clock3 size={15} />, color: "text-amber-400", title: "Планирование" };
+  }
+  if (phase === "resolve") {
+    return { icon: <RotateCw size={15} />, color: "text-orange-400", title: "Резолв" };
+  }
+  return { icon: <Check size={15} />, color: "text-emerald-400", title: "Коммит" };
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function App() {
   const queryClient = useQueryClient();
   const [authState, send] = useMachine(authMachine);
@@ -101,14 +155,31 @@ export default function App() {
   const [regName, setRegName] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [regColor, setRegColor] = useState("#22c55e");
+  const [regFlagImage, setRegFlagImage] = useState<string | null>(null);
+  const [regCoatOfArmsImage, setRegCoatOfArmsImage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [gameState, setGameState] = useState<PublicGameState | null>(null);
   const [selfCountry, setSelfCountry] = useState<Country | null>(null);
   const [selectedProvinceId, setSelectedProvinceId] = useState<string | null>(null);
+  const [selectedProvinceName, setSelectedProvinceName] = useState<string | null>(null);
+  const [regionsLoadError, setRegionsLoadError] = useState<string | null>(null);
+  const [showRegionLabels, setShowRegionLabels] = useState<boolean>(() => {
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEYS.showRegionLabels);
+      if (stored === null) return true;
+      return stored === "1";
+    } catch {
+      return true;
+    }
+  });
+  const [toggleAnim, setToggleAnim] = useState(false);
+  const [hoveredRegion, setHoveredRegion] = useState<HoverRegion | null>(null);
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const regionsGeoJsonRef = useRef<any>(null);
 
   const countriesQuery = useQuery({
     queryKey: ["countries"],
@@ -194,7 +265,13 @@ export default function App() {
   });
 
   const registerMutation = useMutation({
-    mutationFn: (payload: { countryName: string; password: string; color: string }) => api<CountryPayload>("/api/auth/register", {
+    mutationFn: (payload: {
+      countryName: string;
+      password: string;
+      color: string;
+      flagImage?: string;
+      coatOfArmsImage?: string;
+    }) => api<CountryPayload>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(payload)
     }),
@@ -236,16 +313,28 @@ export default function App() {
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: "https://demotiles.maplibre.org/style.json",
-      center: [5, 38],
-      zoom: 2.8
+      style: POLITICAL_BASEMAP_STYLE as any,
+      center: [10, 25],
+      zoom: 1.5
     });
 
-    map.on("load", () => {
-      map.addSource("provinces", {
-        type: "geojson",
-        data: "/provinces.geojson"
-      });
+    map.on("load", async () => {
+      try {
+        const response = await fetch(ADM1_GEOJSON_URL);
+        if (!response.ok) {
+          throw new Error(`Не удалось загрузить ADM1 карту: ${response.status}`);
+        }
+        const geojson = await response.json();
+        regionsGeoJsonRef.current = geojson;
+
+        map.addSource("provinces", {
+          type: "geojson",
+          data: geojson
+        });
+      } catch (error) {
+        setRegionsLoadError(error instanceof Error ? error.message : "Ошибка загрузки карты регионов");
+        return;
+      }
 
       map.addLayer({
         id: "provinces-fill",
@@ -253,7 +342,7 @@ export default function App() {
         source: "provinces",
         paint: {
           "fill-color": ["coalesce", ["get", "ownerColor"], "#3f3f46"],
-          "fill-opacity": ["case", ["boolean", ["get", "contested"], false], 0.9, 0.55]
+          "fill-opacity": ["case", ["boolean", ["get", "contested"], false], 0.7, 0.12]
         }
       });
 
@@ -262,24 +351,72 @@ export default function App() {
         type: "line",
         source: "provinces",
         paint: {
-          "line-color": ["case", ["boolean", ["get", "contested"], false], "#22c55e", "#ffffff"],
-          "line-width": ["case", ["==", ["get", "id"], ""], 1, 1.5]
+          "line-color": ["case", ["boolean", ["get", "contested"], false], "#22c55e", "#f4f4f5"],
+          "line-width": ["case", ["boolean", ["get", "contested"], false], 2.2, 1.2]
         }
       });
 
-      map.on("mousemove", "provinces-fill", () => {
+      map.addLayer({
+        id: "provinces-hover",
+        type: "line",
+        source: "provinces",
+        paint: {
+          "line-color": "#22c55e",
+          "line-width": 3
+        },
+        filter: ["==", ["get", "id"], ""]
+      });
+
+      map.addLayer({
+        id: "regions-label",
+        type: "symbol",
+        source: "provinces",
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 12
+        },
+        paint: {
+          "text-color": "#e4e4e7",
+          "text-halo-color": "#18181b",
+          "text-halo-width": 1.2
+        }
+      });
+
+      map.on("mousemove", "provinces-fill", (event) => {
         map.getCanvas().style.cursor = "pointer";
+        const feature = event.features?.[0];
+        const id =
+          (feature?.properties?.shapeID as string | undefined) ??
+          (feature?.properties?.id as string | undefined);
+        if (!id) return;
+        map.setFilter("provinces-hover", ["==", ["get", "id"], id]);
+        setHoverPos({ x: event.point.x, y: event.point.y });
+        setHoveredRegion({
+          id,
+          name: (feature?.properties?.name as string | undefined) ?? id,
+          ownerName: (feature?.properties?.ownerName as string | undefined) ?? null,
+          contested: Boolean(feature?.properties?.contested)
+        });
       });
 
       map.on("mouseleave", "provinces-fill", () => {
         map.getCanvas().style.cursor = "";
+        map.setFilter("provinces-hover", ["==", ["get", "id"], ""]);
+        setHoveredRegion(null);
       });
 
       map.on("click", "provinces-fill", (event) => {
         const feature = event.features?.[0];
-        const provinceId = feature?.properties?.id as string | undefined;
+        const provinceId =
+          (feature?.properties?.shapeID as string | undefined) ??
+          (feature?.properties?.id as string | undefined);
+        const provinceName =
+          (feature?.properties?.shapeName as string | undefined) ??
+          (feature?.properties?.name as string | undefined) ??
+          provinceId;
         if (provinceId) {
           setSelectedProvinceId(provinceId);
+          setSelectedProvinceName(provinceName ?? provinceId);
         }
       });
     });
@@ -294,37 +431,65 @@ export default function App() {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !gameState || !countriesQuery.data) return;
+    if (!map || !gameState || !countriesQuery.data || !regionsGeoJsonRef.current) return;
 
     const countryColors = new Map(countriesQuery.data.countries.map((c) => [c.id, c.color]));
 
     const source = map.getSource("provinces") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
 
-    fetch("/provinces.geojson")
-      .then((response) => response.json())
-      .then((geojson) => {
-        geojson.features = geojson.features.map((feature: any) => {
-          const province = gameState.provinces.find((item) => item.id === feature.properties.id);
-          const ownerColor = province?.ownerCountryId ? countryColors.get(province.ownerCountryId) : null;
+    const styledGeojson = {
+      type: "FeatureCollection",
+      features: regionsGeoJsonRef.current.features.map((feature: any) => {
+        const featureId = feature.properties.shapeID ?? feature.properties.id;
+        const province = gameState.provinces.find((item) => item.id === featureId);
+        const ownerColor = province?.ownerCountryId ? countryColors.get(province.ownerCountryId) : null;
 
-          return {
-            ...feature,
-            properties: {
-              ...feature.properties,
-              ownerColor,
-              contested: province?.isContested ?? false
-            }
-          };
-        });
-
-        source.setData(geojson);
+        return {
+          ...feature,
+          properties: {
+            ...feature.properties,
+            id: featureId,
+            name: feature.properties.shapeName ?? feature.properties.name ?? featureId,
+            ownerCountryId: province?.ownerCountryId ?? null,
+            ownerName: province?.ownerCountryId ? countriesQuery.data.countries.find((c) => c.id === province.ownerCountryId)?.name ?? null : null,
+            ownerColor,
+            contested: province?.isContested ?? false
+          }
+        };
       })
-      .catch(() => undefined);
+    };
+
+    source.setData(styledGeojson as any);
   }, [countriesQuery.data, gameState]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const updateVisibility = () => {
+      if (!map.getLayer("regions-label")) return;
+      map.setLayoutProperty("regions-label", "visibility", showRegionLabels ? "visible" : "none");
+    };
+
+    if (map.isStyleLoaded()) {
+      updateVisibility();
+    } else {
+      map.once("load", updateVisibility);
+    }
+  }, [showRegionLabels]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.showRegionLabels, showRegionLabels ? "1" : "0");
+    } catch {
+      // Ignore storage errors (private mode / restricted storage).
+    }
+  }, [showRegionLabels]);
 
   const readySet = useMemo(() => new Set(gameState?.snapshot.readyCountries ?? []), [gameState]);
   const isSelfReady = selfCountry ? readySet.has(selfCountry.id) : false;
+  const phaseUI = getPhaseIcon(gameState?.snapshot.phase);
 
   const authOpen = authState.matches("unauthenticated") || authState.matches("authenticating") || authState.matches("checking");
 
@@ -332,15 +497,71 @@ export default function App() {
     <div className="relative h-full w-full overflow-hidden bg-zinc-900 text-white">
       <div ref={mapContainerRef} className="absolute inset-0" />
 
-      <div className="absolute left-4 top-4 z-20 w-[360px] rounded-xl border border-zinc-700/80 bg-zinc-900/85 p-4 backdrop-blur">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-wider text-zinc-400">WeGo</p>
-            <p className="text-lg font-semibold">Ход #{gameState?.snapshot.turnNumber ?? "-"}</p>
+      <div className="absolute left-0 top-0 z-20 w-full border-b border-zinc-700/80 bg-zinc-950/85 backdrop-blur-md">
+        <div className="absolute left-0 top-0 h-full w-40 border-r border-zinc-700/80 bg-zinc-900/95 p-2">
+          <div className="h-full w-full rounded-lg bg-gradient-to-br from-zinc-800 via-zinc-900 to-zinc-800 p-[2px] shadow-[0_0_18px_rgba(0,0,0,0.4)]">
+            <div className="relative h-full w-full overflow-hidden rounded-[7px] border border-zinc-700/80">
+              {selfCountry?.flagImage ? (
+                <img className="h-full w-full object-cover" src={selfCountry.flagImage} alt="Флаг страны" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-[10px] tracking-wider text-zinc-500">FLAG</div>
+              )}
+            </div>
           </div>
+        </div>
+        {regionsLoadError && <p className="mb-2 text-xs text-red-300">{regionsLoadError}</p>}
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 pl-[176px]">
+          {selectedProvinceName && (
+            <div className="rounded-md border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm">
+              <span className="text-zinc-400">Регион</span> <span className="font-semibold text-white">{selectedProvinceName}</span>
+            </div>
+          )}
+          {selfCountry && (
+            <div className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm">
+              <span className="text-zinc-400">Страна</span>
+              <span className="font-semibold" style={{ color: selfCountry.color }}>
+                {selfCountry.name}
+              </span>
+              {selfCountry?.coatOfArmsImage && (
+                <img className="h-6 w-6 rounded border border-zinc-700 object-cover" src={selfCountry.coatOfArmsImage} alt="Герб страны" />
+              )}
+            </div>
+          )}
+          <button
+            className="ml-auto flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm text-zinc-300 transition hover:border-green-500 hover:text-green-400"
+            title="Таймер хода"
+            aria-label="Таймер хода"
+          >
+            <Clock3 size={15} />
+            <span className="font-semibold">{formatRemaining(remainingMs)}</span>
+          </button>
+          <button
+            className={`flex items-center rounded-md border border-zinc-700 bg-zinc-900/90 p-2 text-sm transition hover:border-green-500 ${phaseUI.color}`}
+            title={phaseUI.title}
+            aria-label={phaseUI.title}
+          >
+            {phaseUI.icon}
+          </button>
+          <button
+            className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm text-zinc-300 transition hover:border-green-500 hover:text-green-400"
+            title={`Ход #${gameState?.snapshot.turnNumber ?? "-"}`}
+            aria-label={`Ход #${gameState?.snapshot.turnNumber ?? "-"}`}
+          >
+            <Hash size={15} />
+            <span className="font-semibold">{gameState?.snapshot.turnNumber ?? "-"}</span>
+          </button>
+          <button
+            className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/90 px-3 py-2 text-sm text-zinc-300 transition hover:border-green-500 hover:text-green-400 disabled:opacity-60"
+            onClick={() => readyMutation.mutate()}
+            disabled={!selfCountry || isSelfReady || gameState?.snapshot.phase !== "planning"}
+            title={isSelfReady ? "Ход отправлен" : "Сделать ход"}
+            aria-label={isSelfReady ? "Ход отправлен" : "Сделать ход"}
+          >
+            <Check size={15} />
+          </button>
           {selfCountry && (
             <button
-              className="rounded-md border border-zinc-700 p-2 text-zinc-300 transition hover:border-green-500 hover:text-green-400"
+              className="rounded-md border border-zinc-700 bg-zinc-900/90 p-2 text-zinc-300 transition hover:border-green-500 hover:text-green-400"
               onClick={() => logoutMutation.mutate()}
               title="Выход"
             >
@@ -348,159 +569,215 @@ export default function App() {
             </button>
           )}
         </div>
-
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-lg bg-zinc-800/70 p-2">
-            <p className="text-zinc-400">Фаза</p>
-            <p className="font-semibold text-green-400">{gameState?.snapshot.phase ?? "-"}</p>
-          </div>
-          <div className="rounded-lg bg-zinc-800/70 p-2">
-            <p className="text-zinc-400">Таймер</p>
-            <p className="font-semibold">{formatRemaining(remainingMs)}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 text-sm text-zinc-300">
-          <p>
-            Вы выбрали провинцию: <span className="text-white">{selectedProvinceId ?? "не выбрана"}</span>
-          </p>
-          {selfCountry && (
-            <p>
-              Страна: <span style={{ color: selfCountry.color }}>{selfCountry.name}</span>
-            </p>
-          )}
-        </div>
-
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <button
-            className="rounded-md border border-zinc-700 px-3 py-2 text-sm transition hover:border-green-500 hover:text-green-400 disabled:opacity-50"
-            onClick={() => selectedProvinceId && submitOrderMutation.mutate({ type: "BUILD_FACTORY", provinceId: selectedProvinceId })}
-            disabled={!selectedProvinceId || gameState?.snapshot.phase !== "planning"}
-          >
-            Фабрика
-          </button>
-          <button
-            className="rounded-md border border-zinc-700 px-3 py-2 text-sm transition hover:border-green-500 hover:text-green-400 disabled:opacity-50"
-            onClick={() => selectedProvinceId && submitOrderMutation.mutate({ type: "START_COLONIZATION", provinceId: selectedProvinceId })}
-            disabled={!selectedProvinceId || gameState?.snapshot.phase !== "planning"}
-          >
-            Колонизация
-          </button>
-          <button
-            className="col-span-2 rounded-md border border-zinc-700 px-3 py-2 text-sm transition hover:border-green-500 hover:text-green-400 disabled:opacity-50"
-            onClick={() => selectedProvinceId && submitOrderMutation.mutate({ type: "MOVE_ARMY", provinceId: selectedProvinceId })}
-            disabled={!selectedProvinceId || gameState?.snapshot.phase !== "planning"}
-          >
-            Передвинуть армию
-          </button>
-        </div>
-
-        <button
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-md bg-zinc-800 px-3 py-2 text-sm font-semibold transition hover:bg-zinc-700 hover:text-green-400 disabled:opacity-60"
-          onClick={() => readyMutation.mutate()}
-          disabled={!selfCountry || isSelfReady || gameState?.snapshot.phase !== "planning"}
-        >
-          <Check size={16} />
-          {isSelfReady ? "Ход отправлен" : "Сделать ход"}
-        </button>
       </div>
 
       <Dialog.Root open={authOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 p-5 text-white shadow-xl">
-            <Dialog.Title className="text-xl font-semibold">Вход в игру</Dialog.Title>
-            <Dialog.Description className="mt-1 text-sm text-zinc-400">Выберите страну и введите пароль.</Dialog.Description>
-
-            <div className="mt-4 space-y-3">
-              {authError && (
-                <div className="rounded-md border border-red-500/40 bg-red-900/20 px-3 py-2 text-xs text-red-300">
-                  {authError}
+          <Dialog.Overlay className="auth-overlay fixed inset-0 z-40 bg-zinc-950/80 backdrop-blur-md" />
+          <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center px-6 py-10">
+            <div className="auth-card w-full max-w-4xl overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-900/95 shadow-2xl">
+              <div className="grid min-h-[70vh] grid-cols-1 md:grid-cols-2">
+                <div className="relative hidden overflow-hidden border-r border-zinc-800 md:block">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,197,94,0.3),transparent_60%),radial-gradient(circle_at_80%_80%,rgba(255,255,255,0.08),transparent_55%)]" />
+                  <div className="relative z-10 flex h-full flex-col justify-between p-8">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-zinc-400">WEGO GLOBAL</p>
+                      <h2 className="mt-4 text-3xl font-semibold leading-tight text-white">
+                        Вход в
+                        <br />
+                        стратегическую
+                        <br />
+                        кампанию
+                      </h2>
+                    </div>
+                    <p className="text-sm text-zinc-300">Выберите страну, войдите по паролю и переходите в глобальный ход.</p>
+                  </div>
                 </div>
-              )}
-              <select
-                className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm outline-none transition focus:border-green-500"
-                value={selectedCountryName}
-                onChange={(event) => setSelectedCountryName(event.target.value)}
-              >
-                <option value="">Выберите страну</option>
-                {countriesQuery.data?.countries.map((country) => (
-                  <option key={country.id} value={country.name}>
-                    {country.name}
-                  </option>
-                ))}
-              </select>
 
-              <input
-                className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm outline-none transition focus:border-green-500"
-                type="password"
-                placeholder="Пароль"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
+                <div className="p-6 md:p-10">
+                  <Dialog.Title className="text-2xl font-semibold">Авторизация страны</Dialog.Title>
+                  <Dialog.Description className="mt-2 text-sm text-zinc-400">Выберите страну и введите пароль.</Dialog.Description>
 
-              <button
-                className="flex w-full items-center justify-center gap-2 rounded-md bg-zinc-800 px-3 py-2 text-sm font-semibold transition hover:bg-zinc-700 hover:text-green-400"
-                onClick={() => loginMutation.mutate({ countryName: selectedCountryName, password })}
-                disabled={!selectedCountryName || !password}
-              >
-                <Flag size={16} />
-                Войти
-              </button>
-            </div>
+                  <div className="mt-6 space-y-4">
+                    {authError && (
+                      <div className="rounded-lg border border-red-500/40 bg-red-900/20 px-3 py-2 text-xs text-red-300">{authError}</div>
+                    )}
+                    <select
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm outline-none transition focus:border-green-500"
+                      value={selectedCountryName}
+                      onChange={(event) => setSelectedCountryName(event.target.value)}
+                    >
+                      <option value="">Выберите страну</option>
+                      {countriesQuery.data?.countries.map((country) => (
+                        <option key={country.id} value={country.name}>
+                          {country.name}
+                        </option>
+                      ))}
+                    </select>
 
-            <Dialog.Root open={registerOpen} onOpenChange={setRegisterOpen}>
-              <Dialog.Trigger asChild>
-                <button className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-3 py-2 text-sm transition hover:border-green-500 hover:text-green-400">
-                  <Plus size={16} />
-                  Регистрация страны
-                </button>
-              </Dialog.Trigger>
-
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
-                <Dialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 p-5">
-                  <Dialog.Title className="text-lg font-semibold">Регистрация страны</Dialog.Title>
-                  <div className="mt-3 space-y-3">
                     <input
-                      className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm outline-none transition focus:border-green-500"
-                      placeholder="Название страны"
-                      value={regName}
-                      onChange={(event) => setRegName(event.target.value)}
-                    />
-                    <input
-                      className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm outline-none transition focus:border-green-500"
+                      className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm outline-none transition focus:border-green-500"
                       type="password"
                       placeholder="Пароль"
-                      value={regPassword}
-                      onChange={(event) => setRegPassword(event.target.value)}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
                     />
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm text-zinc-400" htmlFor="color">
-                        Цвет:
-                      </label>
-                      <input
-                        id="color"
-                        className="h-10 w-20 cursor-pointer rounded border border-zinc-700 bg-zinc-800"
-                        type="color"
-                        value={regColor}
-                        onChange={(event) => setRegColor(event.target.value)}
-                      />
-                    </div>
+
                     <button
-                      className="w-full rounded-md bg-zinc-800 px-3 py-2 text-sm font-semibold transition hover:bg-zinc-700 hover:text-green-400"
-                      onClick={() => registerMutation.mutate({ countryName: regName, password: regPassword, color: regColor })}
-                      disabled={!regName || !regPassword}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-3 text-sm font-semibold transition hover:bg-zinc-700 hover:text-green-400 disabled:opacity-60"
+                      onClick={() => loginMutation.mutate({ countryName: selectedCountryName, password })}
+                      disabled={!selectedCountryName || !password}
                     >
-                      Зарегистрировать
+                      <Flag size={16} />
+                      Войти в игру
                     </button>
                   </div>
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
+
+                  <Dialog.Root open={registerOpen} onOpenChange={setRegisterOpen}>
+                    <Dialog.Trigger asChild>
+                      <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 px-3 py-3 text-sm transition hover:border-green-500 hover:text-green-400">
+                        <Plus size={16} />
+                        Регистрация страны
+                      </button>
+                    </Dialog.Trigger>
+
+                    <Dialog.Portal>
+                      <Dialog.Overlay className="auth-overlay fixed inset-0 z-[60] bg-zinc-950/85 backdrop-blur-md" />
+                      <Dialog.Content className="fixed inset-0 z-[70] flex items-center justify-center px-6 py-10">
+                        <div className="auth-card w-full max-w-3xl rounded-2xl border border-zinc-700/70 bg-zinc-900/95 p-8 shadow-2xl">
+                          <Dialog.Title className="text-2xl font-semibold">Регистрация страны</Dialog.Title>
+                          <Dialog.Description className="mt-2 text-sm text-zinc-400">
+                            Укажите название, пароль и цвет вашей страны.
+                          </Dialog.Description>
+                          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <input
+                              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm outline-none transition focus:border-green-500"
+                              placeholder="Название страны"
+                              value={regName}
+                              onChange={(event) => setRegName(event.target.value)}
+                            />
+                            <input
+                              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm outline-none transition focus:border-green-500"
+                              type="password"
+                              placeholder="Пароль"
+                              value={regPassword}
+                              onChange={(event) => setRegPassword(event.target.value)}
+                            />
+                            <div className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3">
+                              <label className="text-sm text-zinc-400" htmlFor="color">
+                                Цвет страны:
+                              </label>
+                              <input
+                                id="color"
+                                className="h-9 w-16 cursor-pointer rounded border border-zinc-700 bg-zinc-900"
+                                type="color"
+                                value={regColor}
+                                onChange={(event) => setRegColor(event.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3">
+                              <label className="block text-sm text-zinc-400" htmlFor="flagImage">
+                                Флаг страны
+                              </label>
+                              <input
+                                id="flagImage"
+                                className="w-full text-xs text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-700 file:px-2 file:py-1 file:text-xs file:text-white"
+                                type="file"
+                                accept="image/*"
+                                onChange={async (event) => {
+                                  const file = event.target.files?.[0];
+                                  if (!file) return;
+                                  try {
+                                    setRegFlagImage(await fileToDataUrl(file));
+                                  } catch (error) {
+                                    setAuthError(error instanceof Error ? error.message : "Ошибка загрузки флага");
+                                  }
+                                }}
+                              />
+                              {regFlagImage && <img className="h-14 w-20 rounded border border-zinc-700 object-cover" src={regFlagImage} alt="Предпросмотр флага" />}
+                            </div>
+                            <div className="space-y-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3">
+                              <label className="block text-sm text-zinc-400" htmlFor="coatImage">
+                                Герб страны
+                              </label>
+                              <input
+                                id="coatImage"
+                                className="w-full text-xs text-zinc-300 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-700 file:px-2 file:py-1 file:text-xs file:text-white"
+                                type="file"
+                                accept="image/*"
+                                onChange={async (event) => {
+                                  const file = event.target.files?.[0];
+                                  if (!file) return;
+                                  try {
+                                    setRegCoatOfArmsImage(await fileToDataUrl(file));
+                                  } catch (error) {
+                                    setAuthError(error instanceof Error ? error.message : "Ошибка загрузки герба");
+                                  }
+                                }}
+                              />
+                              {regCoatOfArmsImage && (
+                                <img className="h-14 w-14 rounded border border-zinc-700 object-cover" src={regCoatOfArmsImage} alt="Предпросмотр герба" />
+                              )}
+                            </div>
+                            <button
+                              className="rounded-lg bg-zinc-800 px-3 py-3 text-sm font-semibold transition hover:bg-zinc-700 hover:text-green-400 disabled:opacity-60"
+                              onClick={() =>
+                                registerMutation.mutate({
+                                  countryName: regName,
+                                  password: regPassword,
+                                  color: regColor,
+                                  flagImage: regFlagImage ?? undefined,
+                                  coatOfArmsImage: regCoatOfArmsImage ?? undefined
+                                })
+                              }
+                              disabled={!regName || !regPassword}
+                            >
+                              Зарегистрировать
+                            </button>
+                          </div>
+                        </div>
+                      </Dialog.Content>
+                    </Dialog.Portal>
+                  </Dialog.Root>
+                </div>
+              </div>
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <button
+        className={`absolute bottom-6 left-1/2 z-30 -translate-x-1/2 rounded-xl border border-zinc-700 bg-zinc-900/90 p-3 text-white backdrop-blur transition hover:-translate-y-0.5 hover:scale-105 hover:border-green-500 hover:text-green-400 active:translate-y-0 active:scale-100 ${
+          toggleAnim ? "icon-toggle-animate" : ""
+        }`}
+        onClick={() => {
+          setShowRegionLabels((value) => !value);
+          setToggleAnim(false);
+          requestAnimationFrame(() => setToggleAnim(true));
+        }}
+        onAnimationEnd={() => setToggleAnim(false)}
+        title={showRegionLabels ? "Скрыть названия провинций" : "Показать названия провинций"}
+        aria-label={showRegionLabels ? "Скрыть названия провинций" : "Показать названия провинций"}
+      >
+        {showRegionLabels ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
+
+      {hoveredRegion && (
+        <div
+          className="pointer-events-none absolute z-30 min-w-[220px] rounded-lg border border-zinc-700 bg-zinc-950/95 px-3 py-2 text-xs text-zinc-200 shadow-xl"
+          style={{
+            left: Math.min(hoverPos.x + 16, window.innerWidth - 260),
+            top: Math.max(hoverPos.y - 12, 80)
+          }}
+        >
+          <p className="text-sm font-semibold text-white">{hoveredRegion.name}</p>
+          <p className="mt-1 text-zinc-400">ID: {hoveredRegion.id}</p>
+          <p className="mt-1">
+            Контроль: <span className="text-white">{hoveredRegion.ownerName ?? "Нейтрально"}</span>
+          </p>
+          {hoveredRegion.contested && <p className="mt-1 font-semibold text-green-400">Оспаривается</p>}
+        </div>
+      )}
     </div>
   );
 }

@@ -3,56 +3,662 @@
   "features": [
     {
       "type": "Feature",
-      "id": "p_west",
-      "properties": { "id": "p_west", "name": "Западная область" },
+      "id": "reg_1_1",
+      "properties": {
+        "id": "reg_1_1",
+        "name": "Регион 1"
+      },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[-20, 30], [-5, 30], [-5, 45], [-20, 45], [-20, 30]]]
+        "coordinates": [
+          [
+            -20,
+            18
+          ],
+          [
+            -10,
+            18
+          ],
+          [
+            -10,
+            27
+          ],
+          [
+            -20,
+            27
+          ],
+          [
+            -20,
+            18
+          ]
+        ]
       }
     },
     {
       "type": "Feature",
-      "id": "p_center",
-      "properties": { "id": "p_center", "name": "Центральный регион" },
+      "id": "reg_1_2",
+      "properties": {
+        "id": "reg_1_2",
+        "name": "Регион 2"
+      },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[-5, 30], [10, 30], [10, 45], [-5, 45], [-5, 30]]]
+        "coordinates": [
+          [
+            -10,
+            18
+          ],
+          [
+            0,
+            18
+          ],
+          [
+            0,
+            27
+          ],
+          [
+            -10,
+            27
+          ],
+          [
+            -10,
+            18
+          ]
+        ]
       }
     },
     {
       "type": "Feature",
-      "id": "p_east",
-      "properties": { "id": "p_east", "name": "Восточная область" },
+      "id": "reg_1_3",
+      "properties": {
+        "id": "reg_1_3",
+        "name": "Регион 3"
+      },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[10, 30], [25, 30], [25, 45], [10, 45], [10, 30]]]
+        "coordinates": [
+          [
+            0,
+            18
+          ],
+          [
+            10,
+            18
+          ],
+          [
+            10,
+            27
+          ],
+          [
+            0,
+            27
+          ],
+          [
+            0,
+            18
+          ]
+        ]
       }
     },
     {
       "type": "Feature",
-      "id": "p_north",
-      "properties": { "id": "p_north", "name": "Северный край" },
+      "id": "reg_1_4",
+      "properties": {
+        "id": "reg_1_4",
+        "name": "Регион 4"
+      },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[-5, 45], [10, 45], [10, 60], [-5, 60], [-5, 45]]]
+        "coordinates": [
+          [
+            10,
+            18
+          ],
+          [
+            20,
+            18
+          ],
+          [
+            20,
+            27
+          ],
+          [
+            10,
+            27
+          ],
+          [
+            10,
+            18
+          ]
+        ]
       }
     },
     {
       "type": "Feature",
-      "id": "p_south",
-      "properties": { "id": "p_south", "name": "Южный округ" },
+      "id": "reg_1_5",
+      "properties": {
+        "id": "reg_1_5",
+        "name": "Регион 5"
+      },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[-5, 15], [10, 15], [10, 30], [-5, 30], [-5, 15]]]
+        "coordinates": [
+          [
+            20,
+            18
+          ],
+          [
+            30,
+            18
+          ],
+          [
+            30,
+            27
+          ],
+          [
+            20,
+            27
+          ],
+          [
+            20,
+            18
+          ]
+        ]
       }
     },
     {
       "type": "Feature",
-      "id": "p_coast",
-      "properties": { "id": "p_coast", "name": "Прибрежная зона" },
+      "id": "reg_2_1",
+      "properties": {
+        "id": "reg_2_1",
+        "name": "Регион 6"
+      },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[25, 20], [40, 20], [40, 35], [25, 35], [25, 20]]]
+        "coordinates": [
+          [
+            -20,
+            27
+          ],
+          [
+            -10,
+            27
+          ],
+          [
+            -10,
+            36
+          ],
+          [
+            -20,
+            36
+          ],
+          [
+            -20,
+            27
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_2_2",
+      "properties": {
+        "id": "reg_2_2",
+        "name": "Регион 7"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            -10,
+            27
+          ],
+          [
+            0,
+            27
+          ],
+          [
+            0,
+            36
+          ],
+          [
+            -10,
+            36
+          ],
+          [
+            -10,
+            27
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_2_3",
+      "properties": {
+        "id": "reg_2_3",
+        "name": "Регион 8"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            0,
+            27
+          ],
+          [
+            10,
+            27
+          ],
+          [
+            10,
+            36
+          ],
+          [
+            0,
+            36
+          ],
+          [
+            0,
+            27
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_2_4",
+      "properties": {
+        "id": "reg_2_4",
+        "name": "Регион 9"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            10,
+            27
+          ],
+          [
+            20,
+            27
+          ],
+          [
+            20,
+            36
+          ],
+          [
+            10,
+            36
+          ],
+          [
+            10,
+            27
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_2_5",
+      "properties": {
+        "id": "reg_2_5",
+        "name": "Регион 10"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            20,
+            27
+          ],
+          [
+            30,
+            27
+          ],
+          [
+            30,
+            36
+          ],
+          [
+            20,
+            36
+          ],
+          [
+            20,
+            27
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_3_1",
+      "properties": {
+        "id": "reg_3_1",
+        "name": "Регион 11"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            -20,
+            36
+          ],
+          [
+            -10,
+            36
+          ],
+          [
+            -10,
+            45
+          ],
+          [
+            -20,
+            45
+          ],
+          [
+            -20,
+            36
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_3_2",
+      "properties": {
+        "id": "reg_3_2",
+        "name": "Регион 12"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            -10,
+            36
+          ],
+          [
+            0,
+            36
+          ],
+          [
+            0,
+            45
+          ],
+          [
+            -10,
+            45
+          ],
+          [
+            -10,
+            36
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_3_3",
+      "properties": {
+        "id": "reg_3_3",
+        "name": "Регион 13"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            0,
+            36
+          ],
+          [
+            10,
+            36
+          ],
+          [
+            10,
+            45
+          ],
+          [
+            0,
+            45
+          ],
+          [
+            0,
+            36
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_3_4",
+      "properties": {
+        "id": "reg_3_4",
+        "name": "Регион 14"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            10,
+            36
+          ],
+          [
+            20,
+            36
+          ],
+          [
+            20,
+            45
+          ],
+          [
+            10,
+            45
+          ],
+          [
+            10,
+            36
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_3_5",
+      "properties": {
+        "id": "reg_3_5",
+        "name": "Регион 15"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            20,
+            36
+          ],
+          [
+            30,
+            36
+          ],
+          [
+            30,
+            45
+          ],
+          [
+            20,
+            45
+          ],
+          [
+            20,
+            36
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_4_1",
+      "properties": {
+        "id": "reg_4_1",
+        "name": "Регион 16"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            -20,
+            45
+          ],
+          [
+            -10,
+            45
+          ],
+          [
+            -10,
+            54
+          ],
+          [
+            -20,
+            54
+          ],
+          [
+            -20,
+            45
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_4_2",
+      "properties": {
+        "id": "reg_4_2",
+        "name": "Регион 17"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            -10,
+            45
+          ],
+          [
+            0,
+            45
+          ],
+          [
+            0,
+            54
+          ],
+          [
+            -10,
+            54
+          ],
+          [
+            -10,
+            45
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_4_3",
+      "properties": {
+        "id": "reg_4_3",
+        "name": "Регион 18"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            0,
+            45
+          ],
+          [
+            10,
+            45
+          ],
+          [
+            10,
+            54
+          ],
+          [
+            0,
+            54
+          ],
+          [
+            0,
+            45
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_4_4",
+      "properties": {
+        "id": "reg_4_4",
+        "name": "Регион 19"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            10,
+            45
+          ],
+          [
+            20,
+            45
+          ],
+          [
+            20,
+            54
+          ],
+          [
+            10,
+            54
+          ],
+          [
+            10,
+            45
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "reg_4_5",
+      "properties": {
+        "id": "reg_4_5",
+        "name": "Регион 20"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            20,
+            45
+          ],
+          [
+            30,
+            45
+          ],
+          [
+            30,
+            54
+          ],
+          [
+            20,
+            54
+          ],
+          [
+            20,
+            45
+          ]
+        ]
       }
     }
   ]

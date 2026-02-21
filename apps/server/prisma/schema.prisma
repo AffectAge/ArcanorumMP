@@ -12,6 +12,8 @@ model Country {
   name         String    @unique
   passwordHash String
   color        String
+  flagImage    String?
+  coatOfArmsImage String?
   createdAt    DateTime  @default(now())
   sessions     Session[]
   orders       Order[]
